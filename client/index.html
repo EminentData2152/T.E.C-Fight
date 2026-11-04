@@ -1,0 +1,622 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#07141f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<title>Mareas</title>
+<style>
+  :root{--bg:#07141f;--panel:#0e2536;--line:#1d4560;--txt:#e8f6ff;--mut:#8db3c9;--acc:#35d6ff;--acc2:#ff4fa3}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none}
+  canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
+  .overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(5,12,20,.55);backdrop-filter:blur(3px);overflow:auto;touch-action:pan-y}
+  .overlay.hidden{display:none}
+  .box{width:min(420px,100%);background:linear-gradient(180deg,#0f2a3d,#0a1c2a);border:1px solid var(--line);border-radius:22px;padding:22px 20px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+  h1{margin:0;font-size:44px;letter-spacing:2px;background:linear-gradient(90deg,#5cc8ff,#35d6ff 40%,#ff4fa3);-webkit-background-clip:text;background-clip:text;color:transparent}
+  h2{margin:0 0 6px;font-size:34px}
+  .tag{margin:6px 0 18px;color:var(--mut);font-size:14px;line-height:1.4}
+  .btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;margin:8px 0;padding:14px 12px;border-radius:14px;border:1px solid var(--line);background:#123049;color:var(--txt);font-size:16px;font-weight:700;text-decoration:none;cursor:pointer}
+  .btn:active{transform:scale(.98)}
+  .btn.primary{background:linear-gradient(90deg,#1698c9,#35d6ff);color:#04121c;border:0;font-size:18px}
+  .btn.apk{background:linear-gradient(90deg,#2a7d3f,#4bd37a);color:#04170b;border:0}
+  .btn[disabled]{opacity:.55;cursor:default}
+  .btn.hidden{display:none}
+  .spin{width:34px;height:34px;margin:14px auto;border-radius:50%;border:4px solid #1d4560;border-top-color:var(--acc);animation:sp 1s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .btn.small{font-size:13px;padding:10px 8px}
+  .row{display:flex;gap:8px}
+  .soon{font-size:11px;font-weight:700;padding:2px 7px;border-radius:99px;background:#24465e;color:var(--mut)}
+  .note{color:var(--mut);font-size:12px;line-height:1.45;margin:8px 0 0}
+  #toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);max-width:90%;padding:11px 16px;border-radius:12px;background:#0e2536;border:1px solid var(--line);font-size:13px;opacity:0;pointer-events:none;transition:opacity .25s;z-index:9}
+  #toast.on{opacity:1}
+  .stats{color:var(--mut);margin:0 0 14px;font-size:14px}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="menu" class="overlay">
+  <div class="box">
+    <h1>MAREAS</h1>
+    <p class="tag">Lee la marea y suelta tu criatura donde más rinde.<br>Destruye las 2 torres rivales en 3 minutos.</p>
+    <button id="btnOnline" class="btn primary">Jugar online 1v1</button>
+    <button id="btnPlay" class="btn">Jugar contra bot</button>
+    <button class="btn" disabled>Colección y sobres <span class="soon">pronto</span></button>
+    <div class="row">
+      <button id="btnOrient" class="btn small">Pantalla: Auto</button>
+      <button id="btnSound" class="btn small">Sonido: sí</button>
+    </div>
+    <button id="btnDiff" class="btn small">Bot: Normal</button>
+    <div id="install"></div>
+    <p class="note">Arrastra una carta al tablero (solo en tu mitad) o tócala y toca el sitio. Fíjate en el aviso de marea: cada criatura rinde más en su elemento.</p>
+  </div>
+</div>
+
+<div id="result" class="overlay hidden">
+  <div class="box">
+    <h2 id="resTitle">Victoria</h2>
+    <p class="stats" id="resStats"></p>
+    <button id="btnAgain" class="btn primary">Revancha</button>
+    <button id="btnMenu" class="btn">Menú</button>
+  </div>
+</div>
+<div id="search" class="overlay hidden">
+  <div class="box">
+    <h2>Online</h2>
+    <p class="tag" id="searchTxt">Conectando…</p>
+    <div class="spin"></div>
+    <button id="btnSearchBot" class="btn hidden">Jugar contra bot mientras tanto</button>
+    <button id="btnSearchCancel" class="btn">Cancelar</button>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script src="sim.js"></script>
+<script>
+(()=>{
+'use strict';
+
+/* ================= Config ================= */
+const APK_URL = 'downloads/mareas.apk';   // pon aquí el enlace a tu APK compilado (o una URL externa)
+// Dirección del servidor online. Vacío = el mismo sitio que sirve el juego (web/PWA).
+// En el APK (Capacitor) ponla completa, p. ej. 'https://mareas.onrender.com'
+const SERVER_URL = '';
+// Toda la lógica del juego vive en sim.js (la misma que usará el servidor). Aquí solo dibujo, entrada y sonido.
+const { W, H, ZY, ZONE_N, SK, EL, AFF, CARDS, TEAM_COL, DIFF, TIDE_WARN, SPAWN_DELAY } = Sim;
+
+/* ================= Utilidades ================= */
+const $ = id => document.getElementById(id);
+const cv = $('c'), ctx = cv.getContext('2d');
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+let orient = 'auto', sound = true;
+try { orient = localStorage.getItem('mareas.orient') || 'auto'; sound = localStorage.getItem('mareas.sound') !== '0'; } catch (e) {}
+function save(){ try { localStorage.setItem('mareas.orient', orient); localStorage.setItem('mareas.sound', sound ? '1' : '0'); } catch (e) {} }
+
+let ac = null;
+function beep(f = 440, d = .08, type = 'sine', v = .035){
+  if (!sound) return;
+  try {
+    ac = ac || new (window.AudioContext || window.webkitAudioContext)();
+    const o = ac.createOscillator(), g = ac.createGain(), t = ac.currentTime;
+    o.type = type; o.frequency.value = f;
+    g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(.0001, t + d);
+    o.connect(g); g.connect(ac.destination); o.start(t); o.stop(t + d);
+  } catch (e) {}
+}
+let toastT = 0;
+function toast(s){ const t = $('toast'); t.textContent = s; t.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('on'), 3200); }
+
+/* ================= Datos visuales ================= */
+const STATE = {
+  agua:  { n: 'Inundada', c: '#1f6fb5', c2: '#5cc8ff' },
+  fuego: { n: 'En llamas', c: '#b5431f', c2: '#ffb15c' },
+  hielo: { n: 'Helada',   c: '#3f8aa6', c2: '#d9f6ff' }
+};
+
+/* ================= Estado ================= */
+// G  = estado de la simulación (viene de Sim; en online llegará del servidor).
+// UI = estado solo del cliente: carta elegida, arrastre, mensajes, efectos visuales, pausa.
+let G = null, UI = null;
+const ME = 0;                                   // mi equipo (en online será 0 o 1)
+const demo = { tide: { cur: ['agua', 'fuego', 'hielo'], next: ['hielo', 'agua', 'fuego'], t: 8 } };
+let diff = 'normal';
+try { diff = localStorage.getItem('mareas.diff') || 'normal'; if (!DIFF[diff]) diff = 'normal'; } catch (e) {}
+
+const mult = u => Sim.mult(G, u);
+function newGame(){
+  NET.wasOnline = false;
+  G = Sim.create({ seed: (Math.random() * 4294967296) >>> 0, bot: diff });
+  UI = { sel: -1, drag: null, msg: null, noEn: 0, exitArm: 0, fx: [], paused: false, shown: false, overT: 0 };
+  $('menu').classList.add('hidden'); $('result').classList.add('hidden');
+  handleEvents();
+}
+function say(txt, life = 1.8){ if (UI) UI.msg = { txt, life, max: life }; }
+
+// Traduce los eventos de la simulación a efectos visuales, sonidos y mensajes
+function handleEvents(list){
+  for (const e of (list || Sim.drain(G))){
+    switch (e.k){
+      case 'ring': case 'line': case 'num': UI.fx.push(e); break;
+      case 'start': say('¡A por las torres!'); break;
+      case 'spawn': if (e.team === ME) beep(520, .07, 'triangle'); break;
+      case 'towerDown': beep(120, .35, 'sawtooth', .06); say(e.team !== ME ? '¡Torre rival destruida!' : '¡Han roto una de tus torres!', 2.2); break;
+      case 'tide': say('¡Cambia la marea!'); beep(200, .25, 'sine', .05); break;
+      case 'fuse': if (e.team === ME){ say('¡Fusión!', 1.2); beep(760, .12, 'square', .03); } break;
+      case 'overtime': say('¡PRÓRROGA! Energía x2', 2.6); beep(300, .3, 'square', .04); break;
+      case 'end': UI.overT = 1.1; beep(e.winner === ME ? 660 : 180, .5, e.winner === ME ? 'triangle' : 'sawtooth', .06); break;
+    }
+  }
+}
+function clientStep(dt){
+  for (const f of UI.fx) f.life -= dt;
+  UI.fx = UI.fx.filter(f => f.life > 0);
+  if (UI.msg){ UI.msg.life -= dt; if (UI.msg.life <= 0) UI.msg = null; }
+  if (UI.noEn > 0) UI.noEn -= dt;
+  if (NET.on){                                   // online: el servidor manda; aquí solo suavizamos
+    const k = 1 - Math.exp(-dt * 14);
+    for (const u of G.units){ u.x += (u.tx - u.x) * k; u.y += (u.ty - u.y) * k; }
+    if (!G.over){ G.t += dt; G.timeLeft = Math.max(0, G.timeLeft - dt); if (G.overtime) G.otLeft = Math.max(0, G.otLeft - dt); G.tide.t = Math.max(0, G.tide.t - dt); }
+    else { UI.overT -= dt; if (!UI.shown && UI.overT <= 0) showResult(); }
+    return;
+  }
+  if (G.over){
+    UI.overT -= dt;
+    if (!UI.shown && UI.overT <= 0) showResult();
+    return;
+  }
+  if (UI.paused) return;
+  Sim.step(G, dt);
+  handleEvents();
+}
+function showResult(){
+  UI.shown = true;
+  const w = G.winner;
+  $('resTitle').textContent = w === ME ? '¡Victoria!' : w === 1 - ME ? 'Derrota' : 'Empate';
+  const mm = Math.floor(G.t / 60), ss = String(Math.floor(G.t % 60)).padStart(2, '0');
+  $('resStats').textContent = `Duración ${mm}:${ss} · Torres tuyas ${Sim.aliveT(G, ME).length}/2 · Rivales ${Sim.aliveT(G, 1 - ME).length}/2 · Criaturas soltadas ${G.stat.dep[ME]}`;
+  $('result').classList.remove('hidden');
+}
+function toMenu(){ if (NET.on){ netSend({ t: 'leave' }); netClose(); } G = null; UI = null; $('result').classList.add('hidden'); $('menu').classList.remove('hidden'); }
+
+
+/* ================= Online ================= */
+const NET = { ws: null, on: false, token: null, units: new Map(), wasOnline: false, searching: false, tries: 0, timers: [] };
+function netUrl(){ return (SERVER_URL || location.origin).replace(/^http/, 'ws') + '/ws'; }
+function netSend(o){ if (NET.ws && NET.ws.readyState === 1) NET.ws.send(JSON.stringify(o)); }
+function netClose(){ const w = NET.ws; NET.ws = null; NET.on = false; NET.searching = false; NET.timers.forEach(clearTimeout); NET.timers = []; if (w){ try { w.close(); } catch (e) {} } }
+function netOpen(onopen){
+  const ws = new WebSocket(netUrl()); NET.ws = ws;
+  ws.onopen = () => { if (NET.ws === ws) onopen(); };
+  ws.onmessage = ev => { if (NET.ws !== ws) return; let m; try { m = JSON.parse(ev.data); } catch (e) { return; } netMsg(m); };
+  ws.onclose = () => { if (NET.ws === ws){ NET.ws = null; netLost(); } };
+  ws.onerror = () => {};
+}
+function startOnline(){
+  if (!/^https?:$/.test(location.protocol) && !SERVER_URL){ toast('Abre el juego desde su dirección web, o configura SERVER_URL en el APK'); return; }
+  NET.wasOnline = true; NET.searching = true; NET.tries = 0; NET.timers.forEach(clearTimeout); NET.timers = [];
+  $('menu').classList.add('hidden'); $('result').classList.add('hidden'); $('search').classList.remove('hidden');
+  $('btnSearchBot').classList.add('hidden');
+  $('searchTxt').textContent = 'Conectando… (si el servidor estaba dormido puede tardar hasta 1 minuto)';
+  NET.timers.push(setTimeout(() => $('btnSearchBot').classList.remove('hidden'), 12000));
+  NET.timers.push(setTimeout(() => { if (NET.searching && NET.ws && NET.ws.readyState !== 1) searchFail('No se pudo conectar con el servidor'); }, 75000));
+  netOpen(() => { $('searchTxt').textContent = 'Buscando rival…'; netSend({ t: 'queue' }); });
+}
+function searchFail(msg){ netClose(); $('search').classList.add('hidden'); $('menu').classList.remove('hidden'); toast(msg); }
+function netLost(){
+  if (NET.searching){ searchFail('Se perdió la conexión con el servidor'); return; }
+  if (!NET.on || !G || G.over) return;
+  if (NET.tries++ >= 12){ toMenu(); toast('Conexión perdida: has perdido la partida'); return; }
+  toast('Conexión perdida. Reconectando…');
+  NET.timers.push(setTimeout(() => { if (NET.on) netOpen(() => netSend({ t: 'rejoin', token: NET.token })); }, 1500));
+}
+function netMsg(m){
+  if (m.t === 'match'){
+    NET.token = m.token; NET.tries = 0; NET.searching = false; NET.timers.forEach(clearTimeout); NET.timers = [];
+    $('search').classList.add('hidden');
+    if (!m.resume || !G){
+      NET.on = true; NET.units.clear();
+      G = { t: 0, units: [], towers: [], tide: { cur: ['agua', 'agua', 'agua'], next: ['agua', 'agua', 'agua'], t: 30 }, timeLeft: Sim.MATCH, overtime: false, otLeft: Sim.OT, over: false, winner: null,
+            en: [0, 0], hands: [[0, 1, 2, 3], null], queues: [[4], null], stat: { dep: [0, 0] }, ev: [] };
+      UI = { sel: -1, drag: null, msg: null, noEn: 0, exitArm: 0, fx: [], paused: false, shown: false, overT: 0 };
+      say('¡Rival encontrado!');
+    } else NET.on = true;
+  } else if (m.t === 's' && G){ netSnap(m.s); handleEvents(m.e || []); }
+  else if (m.t === 'deny' && UI){
+    if (m.reason === 'zone') say('Solo en tu mitad del tablero', 1.2);
+    else if (m.reason === 'energy'){ UI.noEn = .4; beep(150, .1, 'square', .03); }
+  } else if (m.t === 'norejoin'){ toMenu(); toast('La partida ya terminó'); }
+}
+function netSnap(s){
+  G.t = s.t; G.timeLeft = s.tl; G.overtime = !!s.ot; G.otLeft = s.otl; G.tide = s.tide;
+  G.en[0] = s.en; G.hands[0] = s.hand; G.queues[0] = [s.nx]; G.stat.dep[0] = s.dep;
+  G.over = !!s.over; G.winner = s.over ? s.w : null;
+  G.towers = s.tw.map(a => ({ team: a[0], x: a[1], y: a[2], hp: a[3], max: Sim.TOWER_HP, r: 1.2, tower: true }));
+  const seen = new Set(), arr = [];
+  for (const a of s.u){
+    const id = a[0]; let o = NET.units.get(id);
+    if (!o){ o = { id, x: a[3], y: a[4] }; NET.units.set(id, o); }
+    o.team = a[1]; o.ci = a[2]; o.c = CARDS[a[2]]; o.tx = a[3]; o.ty = a[4]; o.hp = a[5]; o.max = o.c.hp;
+    o.slow = a[6] & 1; o.fuse = a[6] & 2 ? 1 : 0; o.born = a[7];
+    seen.add(id); arr.push(o);
+  }
+  for (const id of Array.from(NET.units.keys())) if (!seen.has(id)) NET.units.delete(id);
+  G.units = arr;
+}
+
+/* ================= Disposición (vertical / horizontal) ================= */
+let cw = 0, ch = 0, dpr = 1, land = false, S = 1, OX = 0, OY = 0;
+const HUD = 46, GAP = 8;
+let cardRects = [], energyRect = { x: 0, y: 0, w: 0, h: 0 }, btnOrient = { x: 0, y: 0, w: 0, h: 0 }, btnExit = { x: 0, y: 0, w: 0, h: 0 };
+
+function layout(){
+  cw = window.innerWidth; ch = window.innerHeight; dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+  cv.width = Math.round(cw * dpr); cv.height = Math.round(ch * dpr);
+  land = orient === 'auto' ? cw > ch : orient === 'land';
+  if (!land){
+    const handH = clamp(ch * .22, 118, 175), availH = ch - HUD - handH;
+    S = Math.min(cw / W, availH / H); OX = (cw - W * S) / 2; OY = HUD + (availH - H * S) / 2;
+    const ey = ch - handH + 4;
+    energyRect = { x: GAP, y: ey, w: cw - 2 * GAP, h: 16 };
+    const cy = ey + 16 + 8, cwid = (cw - GAP * 5) / 4;
+    cardRects = [0, 1, 2, 3].map(i => ({ x: GAP + i * (cwid + GAP), y: cy, w: cwid, h: ch - cy - GAP }));
+  } else {
+    const panelW = clamp(cw * .2, 128, 190), availW = cw - panelW, availH = ch - HUD;
+    S = Math.min(availW / H, availH / W); OX = (availW - H * S) / 2; OY = HUD + (availH - W * S) / 2;
+    energyRect = { x: availW + GAP, y: HUD + GAP, w: panelW - 2 * GAP, h: 16 };
+    const cy0 = energyRect.y + 16 + 22, chh = (ch - cy0 - GAP * 4) / 4;
+    cardRects = [0, 1, 2, 3].map(i => ({ x: availW + GAP, y: cy0 + i * (chh + GAP), w: panelW - 2 * GAP, h: chh }));
+  }
+  btnOrient = { x: GAP, y: 7, w: 74, h: 32 };
+  btnExit = { x: cw - GAP - 74, y: 7, w: 74, h: 32 };
+}
+const P = (x, y) => land ? [OX + (H - y) * S, OY + x * S] : [OX + x * S, OY + y * S];
+const Linv = (sx, sy) => land ? [(sy - OY) / S, H - (sx - OX) / S] : [(sx - OX) / S, (sy - OY) / S];
+const inRect = (r, x, y) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+const orientLabel = () => orient === 'auto' ? 'Auto' : orient === 'port' ? 'Vertical' : 'Horizontal';
+
+/* ================= Dibujo ================= */
+function rr(x, y, w, h, r){ ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+function text(s, x, y, size, col, align = 'center', weight = '700', base = 'middle'){
+  ctx.font = `${weight} ${size}px system-ui,-apple-system,Segoe UI,Roboto,sans-serif`;
+  ctx.fillStyle = col; ctx.textAlign = align; ctx.textBaseline = base; ctx.fillText(s, x, y);
+}
+function shapePath(el, x, y, r){
+  ctx.beginPath();
+  if (el === 'fuego'){ ctx.moveTo(x, y - r * 1.15); ctx.lineTo(x + r, y + r * .85); ctx.lineTo(x - r, y + r * .85); ctx.closePath(); }
+  else if (el === 'hielo'){ ctx.moveTo(x, y - r * 1.2); ctx.lineTo(x + r * .85, y); ctx.lineTo(x, y + r * 1.2); ctx.lineTo(x - r * .85, y); ctx.closePath(); }
+  else if (el === 'planta'){ rr(x - r * .9, y - r * .9, r * 1.8, r * 1.8, r * .5); }
+  else if (el === 'rayo'){ for (let i = 0; i < 6; i++){ const a = Math.PI / 3 * i - Math.PI / 6; const px = x + Math.cos(a) * r * 1.05, py = y + Math.sin(a) * r * 1.05; i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); } ctx.closePath(); }
+  else ctx.arc(x, y, r, 0, Math.PI * 2);
+}
+function bar(x, y, w, h, f, col){
+  ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = col; ctx.fillRect(x, y, Math.max(0, w * clamp(f, 0, 1)), h);
+}
+function zoneRect(z){
+  const a = P(0, ZY[z]), b = P(W, ZY[z + 1]);
+  return { x: Math.min(a[0], b[0]), y: Math.min(a[1], b[1]), w: Math.abs(a[0] - b[0]), h: Math.abs(a[1] - b[1]) };
+}
+function drawZones(tide, T){
+  for (let z = 0; z < ZONE_N; z++){
+    const st = tide.cur[z], R = zoneRect(z), info = STATE[st];
+    ctx.save();
+    ctx.beginPath(); ctx.rect(R.x, R.y, R.w, R.h); ctx.clip();
+    const g = ctx.createLinearGradient(R.x, R.y, R.x + R.w, R.y + R.h);
+    g.addColorStop(0, info.c + 'cc'); g.addColorStop(1, info.c + '66');
+    ctx.fillStyle = '#0a1b29'; ctx.fillRect(R.x, R.y, R.w, R.h);
+    ctx.fillStyle = g; ctx.fillRect(R.x, R.y, R.w, R.h);
+    if (st === 'agua'){
+      ctx.strokeStyle = 'rgba(255,255,255,.16)'; ctx.lineWidth = 2;
+      for (let k = 0; k < 6; k++){
+        ctx.beginPath();
+        const yy = R.y + R.h * (k + .5) / 6;
+        for (let x = 0; x <= R.w; x += 8){ const y = yy + Math.sin(x / 22 + T * 1.8 + k) * 4; x ? ctx.lineTo(R.x + x, y) : ctx.moveTo(R.x, y); }
+        ctx.stroke();
+      }
+    } else if (st === 'fuego'){
+      for (let i = 0; i < 22; i++){
+        const px = R.x + ((i * 97) % 100) / 100 * R.w, py = R.y + ((i * 53) % 100) / 100 * R.h;
+        const s = 7 + Math.sin(T * 4 + i) * 3;
+        ctx.fillStyle = `rgba(255,${150 + (i * 13) % 80},60,.2)`;
+        ctx.beginPath(); ctx.moveTo(px, py - s * 1.4); ctx.lineTo(px + s, py + s); ctx.lineTo(px - s, py + s); ctx.closePath(); ctx.fill();
+      }
+    } else {
+      ctx.strokeStyle = 'rgba(255,255,255,.2)'; ctx.fillStyle = 'rgba(255,255,255,.08)'; ctx.lineWidth = 1.5;
+      for (let i = 0; i < 16; i++){
+        const px = R.x + ((i * 61) % 100) / 100 * R.w, py = R.y + ((i * 37) % 100) / 100 * R.h, s = 6 + (i % 3) * 4;
+        ctx.beginPath(); ctx.moveTo(px, py - s * 1.3); ctx.lineTo(px + s, py); ctx.lineTo(px, py + s * 1.3); ctx.lineTo(px - s, py); ctx.closePath(); ctx.fill(); ctx.stroke();
+      }
+    }
+    ctx.restore();
+    // etiqueta
+    const c = P(W / 2, (ZY[z] + ZY[z + 1]) / 2);
+    text(info.n.toUpperCase(), c[0], c[1], Math.max(11, S * .75), 'rgba(255,255,255,.4)');
+    // aviso de la próxima marea
+    if (tide.t <= TIDE_WARN){
+      const nx = STATE[tide.next[z]], pulse = .5 + .5 * Math.sin(T * 8);
+      ctx.save();
+      ctx.strokeStyle = nx.c2; ctx.globalAlpha = .35 + .5 * pulse; ctx.lineWidth = 3; ctx.setLineDash([10, 7]);
+      ctx.strokeRect(R.x + 3, R.y + 3, R.w - 6, R.h - 6);
+      ctx.restore();
+      text('→ ' + nx.n, c[0], c[1] + Math.max(14, S * .95), Math.max(11, S * .7), nx.c2);
+    }
+  }
+  // línea central
+  const a = P(0, H / 2), b = P(W, H / 2);
+  ctx.save(); ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 2; ctx.setLineDash([12, 9]);
+  ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke(); ctx.restore();
+}
+function drawTowers(){
+  for (const t of G.towers){
+    const [sx, sy] = P(t.x, t.y), r = t.r * S, col = TEAM_COL[t.team];
+    if (t.hp <= 0){
+      ctx.fillStyle = 'rgba(0,0,0,.45)'; ctx.beginPath(); ctx.arc(sx, sy, r * .8, 0, Math.PI * 2); ctx.fill();
+      text('×', sx, sy, r, 'rgba(255,255,255,.4)');
+      continue;
+    }
+    ctx.save();
+    ctx.shadowColor = col; ctx.shadowBlur = 12;
+    ctx.fillStyle = '#0c2233'; ctx.strokeStyle = col; ctx.lineWidth = 3;
+    ctx.beginPath(); rr(sx - r, sy - r, r * 2, r * 2, r * .35); ctx.fill(); ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = col; ctx.globalAlpha = .85; ctx.beginPath(); ctx.arc(sx, sy, r * .42, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1;
+    bar(sx - r, sy + r + 4, r * 2, 5, t.hp / t.max, col);
+    text(String(Math.ceil(t.hp)), sx, sy + r + 16, Math.max(9, S * .55), 'rgba(255,255,255,.8)');
+  }
+}
+function drawUnit(el, x, y, r, col, c, m, fuse, ghost){
+  ctx.save();
+  if (ghost) ctx.globalAlpha = .75;
+  if (fuse){ ctx.shadowColor = '#fff'; ctx.shadowBlur = 16; }
+  shapePath(el, x, y, r);
+  ctx.fillStyle = EL[el]; ctx.fill();
+  ctx.lineWidth = 3; ctx.strokeStyle = col; ctx.stroke();
+  ctx.restore();
+  if (c) text(c.name[0], x, y + 1, r * 1.0, '#05131d', 'center', '800');
+}
+function drawUnits(T){
+  const arr = G.units.slice().sort((a, b) => P(a.x, a.y)[1] - P(b.x, b.y)[1]);
+  for (const u of arr){
+    const [sx, sy] = P(u.x, u.y), r = Math.max(9, .62 * S), col = TEAM_COL[u.team], active = G.t >= u.born + SPAWN_DELAY;
+    ctx.fillStyle = 'rgba(0,0,0,.3)'; ctx.beginPath(); ctx.ellipse(sx, sy + r * .95, r * .9, r * .35, 0, 0, Math.PI * 2); ctx.fill();
+    if (!active){
+      const f = (G.t - u.born) / SPAWN_DELAY;
+      ctx.save(); ctx.globalAlpha = .45 + .3 * Math.sin(T * 14); ctx.setLineDash([5, 4]); ctx.strokeStyle = col; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(sx, sy, r * (1.8 - .8 * f), 0, Math.PI * 2); ctx.stroke(); ctx.restore();
+      ctx.save(); ctx.globalAlpha = .4 + .4 * f; drawUnit(u.c.el, sx, sy, r * (.6 + .4 * f), col, u.c, 1, false, false); ctx.restore();
+      continue;
+    }
+    const m = mult(u);
+    drawUnit(u.c.el, sx, sy, r, col, u.c, m, u.fuse > 0, false);
+    if (u.slow > 0){ ctx.strokeStyle = '#d9f6ff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(sx, sy, r * 1.25, 0, Math.PI * 2); ctx.stroke(); }
+    bar(sx - r, sy - r - 9, r * 2, 4, u.hp / u.max, col);
+    // flecha de afinidad
+    if (m >= 1.25 || m <= .75){
+      const up = m >= 1.25, ax = sx + r + 6, ay = sy - r - 7;
+      ctx.fillStyle = up ? '#6dff9a' : '#ff6d6d';
+      ctx.beginPath();
+      if (up){ ctx.moveTo(ax, ay - 5); ctx.lineTo(ax + 5, ay + 4); ctx.lineTo(ax - 5, ay + 4); }
+      else { ctx.moveTo(ax, ay + 5); ctx.lineTo(ax + 5, ay - 4); ctx.lineTo(ax - 5, ay - 4); }
+      ctx.closePath(); ctx.fill();
+    }
+  }
+}
+function drawFx(){
+  for (const f of UI.fx){
+    const a = clamp(f.life / f.max, 0, 1);
+    if (f.k === 'line'){
+      const p = P(f.a[0], f.a[1]), q = P(f.b[0], f.b[1]);
+      ctx.save(); ctx.globalAlpha = a; ctx.strokeStyle = f.col; ctx.lineWidth = 3; ctx.shadowColor = f.col; ctx.shadowBlur = 8;
+      ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.lineTo(q[0], q[1]); ctx.stroke(); ctx.restore();
+    } else if (f.k === 'ring'){
+      const p = P(f.x, f.y);
+      ctx.save(); ctx.globalAlpha = a; ctx.strokeStyle = f.col; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(p[0], p[1], f.r * S * (1 - a * .5), 0, Math.PI * 2); ctx.stroke(); ctx.restore();
+    } else if (f.k === 'num'){
+      const p = P(f.x, f.y);
+      ctx.save(); ctx.globalAlpha = a; text(f.txt, p[0], p[1] - (1 - a) * S * 1.2, Math.max(11, S * .7), f.col, 'center', '800'); ctx.restore();
+    }
+  }
+}
+function drawHud(T){
+  // botones
+  for (const [r, label, hot] of [[btnOrient, orientLabel(), false], [btnExit, UI.exitArm > 0 ? '¿Seguro?' : 'Salir', UI.exitArm > 0]]){
+    ctx.beginPath(); rr(r.x, r.y, r.w, r.h, 10); ctx.fillStyle = hot ? '#6b1f3a' : 'rgba(18,48,73,.9)'; ctx.fill();
+    ctx.strokeStyle = '#1d4560'; ctx.lineWidth = 1; ctx.stroke();
+    text(label, r.x + r.w / 2, r.y + r.h / 2, 12, '#e8f6ff');
+  }
+  const t = G.overtime ? G.otLeft : G.timeLeft, mm = Math.floor(t / 60), ss = String(Math.floor(t % 60)).padStart(2, '0');
+  const mid = cw / 2 - (land ? 0 : 0);
+  text((G.overtime ? 'PRÓRROGA ' : '') + mm + ':' + ss, mid, 16, 20, G.overtime ? '#ffe45c' : '#e8f6ff', 'center', '800');
+  const warn = G.tide.t <= TIDE_WARN;
+  text(warn ? `¡Marea en ${Math.ceil(G.tide.t)}!` : `Marea en ${Math.ceil(G.tide.t)}s`, mid, 35, 12, warn ? STATE[G.tide.next[1]].c2 : '#8db3c9');
+  // mensaje
+  if (UI.msg){
+    const a = clamp(UI.msg.life / .5, 0, 1) * clamp((UI.msg.max - UI.msg.life) / .15, 0, 1);
+    const p = P(W / 2, H / 2 - 4);
+    ctx.save(); ctx.globalAlpha = a;
+    ctx.font = '800 22px system-ui,sans-serif'; const w = ctx.measureText(UI.msg.txt).width + 32;
+    ctx.beginPath(); rr(p[0] - w / 2, p[1] - 20, w, 40, 14); ctx.fillStyle = 'rgba(5,14,22,.8)'; ctx.fill();
+    text(UI.msg.txt, p[0], p[1], 22, '#fff', 'center', '800'); ctx.restore();
+  }
+  if (UI.paused){
+    ctx.fillStyle = 'rgba(5,12,20,.7)'; ctx.fillRect(0, 0, cw, ch);
+    text('PAUSA', cw / 2, ch / 2 - 12, 34, '#fff', 'center', '800');
+    text('Toca para seguir', cw / 2, ch / 2 + 22, 16, '#8db3c9');
+  }
+}
+function best(el){ let b = 'agua'; for (const s of SK) if (AFF[el][s] > AFF[el][b]) b = s; return b; }
+function drawCards(T){
+  // energía
+  const E = energyRect, en = G.en[ME];
+  ctx.beginPath(); rr(E.x, E.y, E.w, E.h, 8); ctx.fillStyle = '#0a1b29'; ctx.fill();
+  ctx.save(); ctx.beginPath(); rr(E.x, E.y, E.w, E.h, 8); ctx.clip();
+  ctx.fillStyle = UI.noEn > 0 ? '#ff6d6d' : '#35d6ff'; ctx.fillRect(E.x, E.y, E.w * en / 10, E.h);
+  ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.lineWidth = 1;
+  for (let i = 1; i < 10; i++){ const x = E.x + E.w * i / 10; ctx.beginPath(); ctx.moveTo(x, E.y); ctx.lineTo(x, E.y + E.h); ctx.stroke(); }
+  ctx.restore();
+  text(en.toFixed(1), E.x + E.w / 2, E.y + E.h / 2 + 1, 12, '#fff', 'center', '800');
+  for (let i = 0; i < 4; i++){
+    const R = cardRects[i], c = CARDS[G.hands[ME][i]], ok = en >= c.cost, sel = UI.sel === i || (UI.drag && UI.drag.i === i);
+    ctx.save();
+    ctx.globalAlpha = ok ? 1 : .5;
+    ctx.beginPath(); rr(R.x, R.y, R.w, R.h, 14); ctx.fillStyle = '#10283a'; ctx.fill();
+    ctx.lineWidth = sel ? 4 : 2; ctx.strokeStyle = sel ? '#fff' : EL[c.el]; ctx.stroke();
+    const small = R.h < 90 || R.w < 90;
+    const ir = Math.min(R.w, R.h) * (small ? .22 : .2);
+    const icy = R.y + R.h * (land ? .34 : .36);
+    drawUnit(c.el, R.x + R.w / 2 + (land ? R.w * .12 : 0), icy, ir, '#0a1b29', c, 1, false, false);
+    text(c.name, R.x + R.w / 2, R.y + R.h * (land ? .66 : .68), clamp(R.w * .15, 11, 15), '#e8f6ff');
+    // gotas de afinidad: un cuadrado por estado, altura según multiplicador
+    const bw = 8, bx = R.x + R.w / 2 - (3 * bw + 2 * 4) / 2, by = R.y + R.h - 8;
+    SK.forEach((s, k) => { const h = 4 + 10 * (AFF[c.el][s] - .6) / .85; ctx.fillStyle = STATE[s].c2; ctx.globalAlpha = (ok ? 1 : .5) * (s === best(c.el) ? 1 : .55); ctx.fillRect(bx + k * (bw + 4), by - h, bw, h); });
+    ctx.globalAlpha = ok ? 1 : .5;
+    // coste
+    ctx.beginPath(); ctx.arc(R.x + 15, R.y + 15, 12, 0, Math.PI * 2); ctx.fillStyle = '#35d6ff'; ctx.fill();
+    text(String(c.cost), R.x + 15, R.y + 16, 14, '#04121c', 'center', '800');
+    ctx.restore();
+  }
+  // siguiente
+  const nx = CARDS[G.queues[ME][0]];
+  const ex = land ? E.x : E.x + E.w;
+  text('Sig: ' + nx.name, land ? E.x + E.w / 2 : E.x + E.w - 4, land ? E.y + E.h + 10 : E.y - 8, 11, '#8db3c9', land ? 'center' : 'right');
+  // zona válida al arrastrar
+  if (UI.drag && UI.drag.moved){ /* se dibuja en el tablero */ }
+}
+function drawDeployZone(){
+  const a = P(0, 15), b = P(W, 27.2);
+  const x = Math.min(a[0], b[0]), y = Math.min(a[1], b[1]), w = Math.abs(a[0] - b[0]), h = Math.abs(a[1] - b[1]);
+  ctx.save(); ctx.fillStyle = 'rgba(255,255,255,.1)'; ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.setLineDash([8, 6]); ctx.lineWidth = 2; ctx.strokeRect(x + 1, y + 1, w - 2, h - 2); ctx.restore();
+}
+function draw(T){
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#07141f'; ctx.fillRect(0, 0, cw, ch);
+  const tide = G ? G.tide : demo.tide;
+  drawZones(tide, T);
+  if (!G) return;
+  if (UI.sel >= 0 || (UI.drag && UI.drag.moved)) drawDeployZone();
+  drawTowers(); drawUnits(T); drawFx(); drawHud(T); drawCards(T);
+  if (UI.drag && UI.drag.moved){
+    const c = CARDS[G.hands[ME][UI.drag.i]], [lx, ly] = Linv(UI.drag.x, UI.drag.y);
+    const okp = validSpot(lx, ly);
+    ctx.save(); ctx.strokeStyle = okp ? '#6dff9a' : '#ff6d6d'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(UI.drag.x, UI.drag.y, Math.max(14, .62 * S) * 1.7, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
+    drawUnit(c.el, UI.drag.x, UI.drag.y, Math.max(9, .62 * S), TEAM_COL[0], c, 1, false, true);
+  }
+}
+
+/* ================= Entrada ================= */
+const validSpot = (x, y) => Sim.validSpot(ME, x, y);
+function tryDeploy(slot, sx, sy){
+  const [lx, ly] = Linv(sx, sy);
+  if (NET.on){                                   // online: el servidor decide; aquí solo avisamos rápido
+    if (!validSpot(lx, ly)){ say('Solo en tu mitad del tablero', 1.2); return false; }
+    const c = CARDS[G.hands[ME][slot]];
+    if (G.en[ME] < c.cost){ UI.noEn = .4; beep(150, .1, 'square', .03); return false; }
+    G.en[ME] -= c.cost; UI.sel = -1;
+    netSend({ t: 'play', slot, x: +lx.toFixed(2), y: +ly.toFixed(2) });
+    return true;
+  }
+  const r = Sim.play(G, ME, slot, lx, ly);
+  if (r.ok){ UI.sel = -1; handleEvents(); return true; }
+  if (r.reason === 'zone') say('Solo en tu mitad del tablero', 1.2);
+  else if (r.reason === 'energy'){ UI.noEn = .4; beep(150, .1, 'square', .03); }
+  return false;
+}
+cv.addEventListener('pointerdown', e => {
+  if (!G) return;
+  e.preventDefault();
+  const x = e.clientX, y = e.clientY;
+  if (G.over) return;
+  if (UI.paused){ UI.paused = false; return; }
+  if (inRect(btnOrient, x, y)){ orient = orient === 'auto' ? 'port' : orient === 'port' ? 'land' : 'auto'; save(); layout(); return; }
+  if (inRect(btnExit, x, y)){
+    if (UI.exitArm > 0) toMenu(); else { UI.exitArm = 2.5; setTimeout(() => { if (G) UI.exitArm = 0; }, 2500); }
+    return;
+  }
+  for (let i = 0; i < 4; i++) if (inRect(cardRects[i], x, y)){
+    UI.sel = i; UI.drag = { i, x, y, sx: x, sy: y, moved: false };
+    try { cv.setPointerCapture(e.pointerId); } catch (_) {}
+    return;
+  }
+  if (UI.sel >= 0) tryDeploy(UI.sel, x, y);
+});
+cv.addEventListener('pointermove', e => {
+  if (!G || !UI.drag) return;
+  UI.drag.x = e.clientX; UI.drag.y = e.clientY;
+  if (Math.hypot(UI.drag.x - UI.drag.sx, UI.drag.y - UI.drag.sy) > 10) UI.drag.moved = true;
+});
+function endDrag(e, cancel){
+  if (!G || !UI.drag) return;
+  const d = UI.drag; UI.drag = null;
+  if (d.moved){
+    if (!cancel) tryDeploy(d.i, e.clientX, e.clientY);
+    UI.sel = -1;
+  }
+}
+cv.addEventListener('pointerup', e => endDrag(e, false));
+cv.addEventListener('pointercancel', e => endDrag(e, true));
+document.addEventListener('visibilitychange', () => { if (document.hidden && G && !G.over && !NET.on) UI.paused = true; });
+document.addEventListener('contextmenu', e => e.preventDefault());
+window.addEventListener('resize', layout);
+window.addEventListener('orientationchange', () => setTimeout(layout, 120));
+
+/* ================= Menú ================= */
+function refreshMenu(){ $('btnDiff').textContent = 'Bot: ' + DIFF[diff].name + ' (toca para cambiar)'; $('btnOrient').textContent = 'Pantalla: ' + orientLabel(); $('btnSound').textContent = 'Sonido: ' + (sound ? 'sí' : 'no'); }
+$('btnPlay').onclick = () => { beep(600, .08, 'triangle'); newGame(); };
+$('btnDiff').onclick = () => { diff = diff === 'facil' ? 'normal' : diff === 'normal' ? 'dificil' : 'facil'; try { localStorage.setItem('mareas.diff', diff); } catch (e) {} refreshMenu(); };
+$('btnAgain').onclick = () => { if (NET.wasOnline){ netClose(); G = null; UI = null; startOnline(); } else newGame(); };
+$('btnOnline').onclick = () => { beep(600, .08, 'triangle'); startOnline(); };
+$('btnSearchCancel').onclick = () => { netSend({ t: 'cancel' }); netClose(); $('search').classList.add('hidden'); $('menu').classList.remove('hidden'); };
+$('btnSearchBot').onclick = () => { netSend({ t: 'cancel' }); netClose(); $('search').classList.add('hidden'); newGame(); };
+$('btnMenu').onclick = toMenu;
+$('btnOrient').onclick = () => { orient = orient === 'auto' ? 'port' : orient === 'port' ? 'land' : 'auto'; save(); layout(); refreshMenu(); };
+$('btnSound').onclick = () => { sound = !sound; save(); refreshMenu(); beep(500, .08); };
+
+function setupInstall(){
+  const ua = navigator.userAgent;
+  const ios = /iPhone|iPad|iPod/i.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const installed = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true ||
+                    !!window.Capacitor || location.protocol === 'file:' || location.protocol === 'capacitor:' || /\bwv\b/.test(ua);
+  const box = $('install');
+  if (installed) return;
+  if (ios){
+    box.innerHTML = '<p class="note"><b>iPhone/iPad:</b> juega aquí en la web. Para tenerlo como app pulsa Compartir y «Añadir a pantalla de inicio».</p>';
+    return;
+  }
+  box.innerHTML = '<a id="apk" class="btn apk" href="' + APK_URL + '" download>Descargar APK (Android)</a><p class="note">Si tu Android lo pide, permite instalar apps desde este navegador.</p>';
+  $('apk').addEventListener('click', async ev => {
+    ev.preventDefault();
+    try {
+      const r = await fetch(APK_URL, { method: 'HEAD', cache: 'no-store' });
+      const type = (r.headers.get('content-type') || '').toLowerCase();
+      if (r.ok && !type.includes('text/html')){ window.location.href = APK_URL; return; }
+    } catch (_) {}
+    toast('El APK todavía no está publicado. Compílalo y súbelo a client/downloads/mareas.apk');
+  });
+}
+
+/* ================= Bucle ================= */
+let last = performance.now();
+function frame(now){
+  const dt = Math.min(.05, (now - last) / 1000); last = now;
+  if (G) clientStep(dt);
+  else { demo.tide.t -= dt; if (demo.tide.t <= 0){ demo.tide.cur = demo.tide.next; demo.tide.next = Sim.randTide(demo.tide.cur); demo.tide.t = 9; } }
+  draw(now / 1000);
+  requestAnimationFrame(frame);
+}
+layout(); refreshMenu(); setupInstall();
+requestAnimationFrame(frame);
+if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) navigator.serviceWorker.register('sw.js').catch(() => {});
+window.__mareas = { NET, get G(){ return G; }, get UI(){ return UI; }, Sim, newGame, step: clientStep, layout, playCard: (slot, x, y) => Sim.play(G, ME, slot, x, y), plan: (team, avail, prm) => Sim.plan(G, team, avail, prm), DIFF, setDiff: d => { diff = d; }, CARDS, setOrient: o => { orient = o; layout(); } };
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+{
+  "name": "Mareas",
+  "short_name": "Mareas",
+  "description": "Lee la marea y suelta tu criatura donde más rinde.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#07141f",
+  "theme_color": "#07141f",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}
